@@ -8,6 +8,7 @@ import streamlit as st
 import pdfplumber
 import chromadb
 from google import genai
+from groq import Groq
 import os
 import time
 
@@ -20,6 +21,12 @@ st.write("Upload your CV or Resume and paste a Job Description to see if you are
 
 # Input for Google API Key
 api_key = st.text_input("Enter your Google Gemini API Key:", type="password")
+
+# Input for GROQ API Key
+use_groq = st.toggle("Use Groq for Evaluation (Fallback for Gemini Quota)")
+groq_api_key = ""
+if use_groq:
+    groq_api_key = st.text_input("Enter your Groq API Key:", type="password")
 
 # ==========================================
 # 2. Helper Functions
@@ -129,7 +136,7 @@ if st.button("Evaluate My CV/Resume"):
                 st.info("Taking a brief pause to respect API speed limits...")
                 time.sleep(10) # Pauses the script for 10 seconds
                 
-                # Step 5: Generate Final Assessment with Gemini
+               # Step 5: Generate Final Assessment
                 prompt = f"""
                 You are an expert technical recruiter and HR evaluator. 
                 I will provide you with a Job Description and relevant snippets retrieved from a candidate's resume.
@@ -148,33 +155,52 @@ if st.button("Evaluate My CV/Resume"):
                 3. **Missing Skills:** (List the crucial requirements from the JD that are NOT found in the resume context)
                 4. **Advice:** (One sentence on how they can improve their resume for this specific role)
                 """
-                # --- AUTO-RETRY LOGIC ---
-                max_retries = 3
-                for attempt in range(max_retries):
-                    try:
-                        response = client.models.generate_content(
-                            model='gemini-2.5-flash',
-                            contents=prompt
-                        )
-                        # Display Results if successful
-                        st.success("Evaluation Complete!")
-                        st.markdown("### Evaluation Report")
-                        st.markdown(response.text)
-                        break # Break out of the loop on success
+                
+                # --- HYBRID GENERATION ROUTING ---
+                if use_groq:
+                    if not groq_api_key:
+                        st.error("Please enter your Groq API Key to use the fallback.")
+                        st.stop()
                         
-                    except Exception as e:
-                        error_msg = str(e)
-                        if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-                            if attempt < max_retries - 1:
-                                st.warning(f"Google API is catching its breath. Retrying in 10 seconds... (Attempt {attempt + 1}/{max_retries})")
-                                time.sleep(10)
-                            else:
-                                st.error("The API is too busy right now. Please wait a minute and try again.")
-                        else:
-                            # If it's a completely different error, show it
-                            st.error(f"An unexpected error occurred: {e}")
-                            break
+                    st.info("Using Groq (Llama 3 70B) for evaluation...")
+                    groq_client = Groq(api_key=groq_api_key)
+                    
+                    chat_completion = groq_client.chat.completions.create(
+                        messages=[{"role": "user", "content": prompt}],
+                        model="llama3-70b-8192", # One of the smartest models on Groq
+                    )
+                    
+                    st.success("Evaluation Complete!")
+                    st.markdown("### Evaluation Report (Powered by Groq)")
+                    st.markdown(chat_completion.choices[0].message.content)
+                    
+                else:
+                    # Original Gemini Auto-Retry Logic
+                    st.info("Using Gemini for evaluation...")
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            response = client.models.generate_content(
+                                model='gemini-2.5-flash',
+                                contents=prompt
+                            )
+                            st.success("Evaluation Complete!")
+                            st.markdown("### Evaluation Report (Powered by Gemini)")
+                            st.markdown(response.text)
+                            break 
                             
+                        except Exception as e:
+                            error_msg = str(e)
+                            if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+                                if attempt < max_retries - 1:
+                                    st.warning(f"Google API is catching its breath. Retrying in 10 seconds... (Attempt {attempt + 1}/{max_retries})")
+                                    time.sleep(10)
+                                else:
+                                    st.error("The Gemini API is too busy right now. Flip the toggle above to try Groq!")
+                            else:
+                                st.error(f"An unexpected error occurred: {e}")
+                                break
+                                
                 response = client.models.generate_content(
                     model='gemini-2.0-flash',
                     contents=prompt
