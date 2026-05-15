@@ -9,6 +9,7 @@ import pdfplumber
 import chromadb
 from google import genai
 import os
+import time
 
 # ==========================================
 # 1. Configuration & Setup
@@ -123,6 +124,10 @@ if st.button("Evaluate My Resume"):
                 )
                 
                 retrieved_context = "\n\n---\n\n".join(results['documents'][0])
+
+                #cooldown
+                st.info("Taking a brief pause to respect API speed limits...")
+                time.sleep(10) # Pauses the script for 10 seconds
                 
                 # Step 5: Generate Final Assessment with Gemini
                 prompt = f"""
