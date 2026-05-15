@@ -148,7 +148,33 @@ if st.button("Evaluate My CV/Resume"):
                 3. **Missing Skills:** (List the crucial requirements from the JD that are NOT found in the resume context)
                 4. **Advice:** (One sentence on how they can improve their resume for this specific role)
                 """
-                
+                # --- AUTO-RETRY LOGIC ---
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        response = client.models.generate_content(
+                            model='gemini-2.0-flash',
+                            contents=prompt
+                        )
+                        # Display Results if successful
+                        st.success("Evaluation Complete!")
+                        st.markdown("### Evaluation Report")
+                        st.markdown(response.text)
+                        break # Break out of the loop on success
+                        
+                    except Exception as e:
+                        error_msg = str(e)
+                        if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+                            if attempt < max_retries - 1:
+                                st.warning(f"Google API is catching its breath. Retrying in 10 seconds... (Attempt {attempt + 1}/{max_retries})")
+                                time.sleep(10)
+                            else:
+                                st.error("The API is too busy right now. Please wait a minute and try again.")
+                        else:
+                            # If it's a completely different error, show it
+                            st.error(f"An unexpected error occurred: {e}")
+                            break
+                            
                 response = client.models.generate_content(
                     model='gemini-2.0-flash',
                     contents=prompt
