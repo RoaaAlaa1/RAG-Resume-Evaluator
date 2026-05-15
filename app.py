@@ -15,8 +15,8 @@ import time
 # 1. Configuration & Setup
 # ==========================================
 st.set_page_config(page_title="AI Resume Evaluator", page_icon="📄")
-st.title("📄 AI Resume Evaluator (RAG)")
-st.write("Upload your CV and paste a Job Description to see if you are a match!")
+st.title("📄 AI Resume Evaluator ")
+st.write("Upload your CV or Resume and paste a Job Description to see if you are a match!")
 
 # Input for Google API Key
 api_key = st.text_input("Enter your Google Gemini API Key:", type="password")
@@ -67,16 +67,16 @@ def get_embeddings(texts, client):
 col1, col2 = st.columns(2)
 
 with col1:
-    uploaded_file = st.file_uploader("1. Upload your Resume (PDF)", type="pdf")
+    uploaded_file = st.file_uploader("1. Upload your CV/Resume (PDF)", type="pdf")
 
 with col2:
     job_description = st.text_area("2. Paste the Job Description here", height=150)
 
-if st.button("Evaluate My Resume"):
+if st.button("Evaluate My CV/Resume"):
     if not api_key:
         st.error("Please enter your Google API Key.")
     elif not uploaded_file:
-        st.error("Please upload a resume.")
+        st.error("Please upload a cv/resume.")
     elif not job_description:
         st.error("Please paste a job description.")
     else:
