@@ -153,7 +153,7 @@ if st.button("Evaluate My CV/Resume"):
                 for attempt in range(max_retries):
                     try:
                         response = client.models.generate_content(
-                            model='gemini-2.0-flash',
+                            model='gemini-1.5-flash',
                             contents=prompt
                         )
                         # Display Results if successful
