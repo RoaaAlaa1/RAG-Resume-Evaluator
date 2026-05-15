@@ -2,3 +2,5 @@ streamlit
 google-genai
 chromadb
 pdfplumber
+protobuf<5.0.0
+pysqlite3-binary
