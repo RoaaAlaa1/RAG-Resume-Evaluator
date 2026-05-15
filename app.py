@@ -55,7 +55,7 @@ def chunk_text(text, chunk_size=500):
 def get_embeddings(texts, client):
     """Generates vector embeddings using Gemini."""
     response = client.models.embed_content(
-        model='text-embedding-004',
+        model='gemini-embedding-2',
         contents=texts
     )
     return [e.values for e in response.embeddings]
