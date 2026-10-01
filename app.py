@@ -13,57 +13,26 @@ import time
 import pdfplumber
 import streamlit as st
 import chromadb
+from google import genai
 from groq import Groq
-from dotenv import load_dotenv
-
-from ui import (
-    apply_custom_css,
-    render_hero_header,
-    render_setup_banner,
-    render_sidebar,
-    render_inputs,
-    render_results
-)
-
-# Load environment variables if .env file exists
-load_dotenv()
+import os
+import time
 
 # ==========================================
 # 1. Groq API Key Configuration
 # ==========================================
-# You can set your Groq API key in .env (GROQ_API_KEY=gsk_...) or below
-FIXED_GROQ_API_KEY = ""
+st.set_page_config(page_title="AI Resume Evaluator", page_icon="📄")
+st.title("📄 AI Resume Evaluator ")
+st.write("Upload your CV or Resume and paste a Job Description to see if you are a match!")
 
-def resolve_groq_api_key() -> str:
-    env_key = os.environ.get("GROQ_API_KEY", "").strip()
-    if env_key and not env_key.startswith("gsk_your_groq"):
-        return env_key
-    
-    if FIXED_GROQ_API_KEY and not FIXED_GROQ_API_KEY.startswith("gsk_YourFixed"):
-        return FIXED_GROQ_API_KEY.strip()
-    
-    try:
-        if hasattr(st, "secrets") and "GROQ_API_KEY" in st.secrets:
-            secret_key = str(st.secrets["GROQ_API_KEY"]).strip()
-            if secret_key:
-                return secret_key
-    except Exception:
-        pass
-        
-    return ""
+# Input for Google API Key
+api_key = st.text_input("Enter your Google Gemini API Key:", type="password")
 
-# ==========================================
-# 2. Page Configuration & Custom Light Theme CSS
-# ==========================================
-st.set_page_config(
-    page_title="AI Resume Evaluator | RAG Powered",
-    page_icon="💼",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Apply Custom CSS from ui.py
-apply_custom_css()
+# Input for GROQ API Key
+use_groq = st.toggle("Use Groq for Evaluation (Fallback for Gemini Quota)")
+groq_api_key = ""
+if use_groq:
+    groq_api_key = st.text_input("Enter your Groq API Key:", type="password")
 
 # ==========================================
 # 3. Helper Functions
@@ -185,88 +154,95 @@ if evaluate_btn:
                     ids=chunk_ids
                 )
                 
-                # Step 4: Semantic Query Retrieval
-                status_box.update(label="🎯 Retrieving top matching resume sections for the JD...", state="running")
-                effective_k = min(top_k_chunks, len(cv_chunks))
-                query_results = collection.query(
-                    query_texts=[job_description],
-                    n_results=effective_k
+                # Step 4: Retrieve relevant CV chunks using the Job Description as a query
+                # We embed the JD to find the closest matching skills/experiences in the CV
+                jd_embedding = get_embeddings([job_description], client)[0]
+                
+                results = collection.query(
+                    query_embeddings=[jd_embedding],
+                    n_results=5 # Retrieve the top 5 most relevant chunks
                 )
                 
-                retrieved_docs = query_results.get('documents', [[]])[0]
-                retrieved_context = "\n\n---\n\n".join(retrieved_docs)
+                retrieved_context = "\n\n---\n\n".join(results['documents'][0])
+
+                #cooldown
+                st.info("Taking a brief pause to respect API speed limits...")
+                time.sleep(10) # Pauses the script for 10 seconds
                 
-                # Step 5: Groq LLM Inference
-                status_box.update(label=f"⚡ Generating assessment with Groq ({model_choice})...", state="running")
-                groq_client = Groq(api_key=api_key)
+               # Step 5: Generate Final Assessment
+                prompt = f"""
+                You are an expert technical recruiter and HR evaluator. 
+                I will provide you with a Job Description and relevant snippets retrieved from a candidate's resume.
                 
-                system_prompt = (
-                    "You are a Senior Technical Recruiter and Hiring Lead. "
-                    "Evaluate candidate resumes against job descriptions thoroughly, objectively, and constructively."
+                Your task is to analyze if the candidate is qualified for the role.
+                
+                **Job Description:**
+                {job_description}
+                
+                **Retrieved Resume Context:**
+                {retrieved_context}
+                
+                **Please provide your output in the following format:**
+                1. **Overall Verdict:** (Are they a strong, partial, or weak match?)
+                2. **Skills Met:** (List the requirements from the JD that are explicitly found in the resume)
+                3. **Missing Skills:** (List the crucial requirements from the JD that are NOT found in the resume context)
+                4. **Advice:** (One sentence on how they can improve their resume for this specific role)
+                """
+                
+                # --- HYBRID GENERATION ROUTING ---
+                if use_groq:
+                    if not groq_api_key:
+                        st.error("Please enter your Groq API Key to use the fallback.")
+                        st.stop()
+                        
+                    st.info("Using Groq (Llama 3 70B) for evaluation...")
+                    groq_client = Groq(api_key=groq_api_key)
+                    
+                    chat_completion = groq_client.chat.completions.create(
+                        messages=[{"role": "user", "content": prompt}],
+                        model="llama3-70b-8192", # One of the smartest models on Groq
+                    )
+                    
+                    st.success("Evaluation Complete!")
+                    st.markdown("### Evaluation Report (Powered by Groq)")
+                    st.markdown(chat_completion.choices[0].message.content)
+                    
+                else:
+                    # Original Gemini Auto-Retry Logic
+                    st.info("Using Gemini for evaluation...")
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            response = client.models.generate_content(
+                                model='gemini-2.5-flash',
+                                contents=prompt
+                            )
+                            st.success("Evaluation Complete!")
+                            st.markdown("### Evaluation Report (Powered by Gemini)")
+                            st.markdown(response.text)
+                            break 
+                            
+                        except Exception as e:
+                            error_msg = str(e)
+                            if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+                                if attempt < max_retries - 1:
+                                    st.warning(f"Google API is catching its breath. Retrying in 10 seconds... (Attempt {attempt + 1}/{max_retries})")
+                                    time.sleep(10)
+                                else:
+                                    st.error("The Gemini API is too busy right now. Flip the toggle above to try Groq!")
+                            else:
+                                st.error(f"An unexpected error occurred: {e}")
+                                break
+                                
+                response = client.models.generate_content(
+                    model='gemini-2.0-flash',
+                    contents=prompt
                 )
                 
-                user_prompt = f"""
-Analyze the candidate's resume snippets retrieved via semantic search against the provided Job Description.
-
-=========================
-JOB DESCRIPTION:
-=========================
-{job_description}
-
-=========================
-RELEVANT RESUME CONTEXT (Retrieved from Candidate CV):
-=========================
-{retrieved_context}
-
-=========================
-FULL RESUME PREVIEW:
-=========================
-{cv_text[:1500]}
-
-=========================
-EVALUATION FORMAT:
-=========================
-Please evaluate the candidate strictly following this structured markdown format:
-
-### 1. Overall Match Verdict
-- **Match Level**: [Strong Match (80-100%) | Moderate Match (50-79%) | Weak Match (<50%)]
-- **Executive Summary**: 2-3 concise sentences summarizing the candidate's overall qualification and alignment for this role.
-
-### 2. Key Qualifications & Skills Met
-- Bullet points listing the specific skills, tools, experience levels, and certifications explicitly found in the resume matching the JD requirements.
-
-### 3. Missing Requirements & Skill Gaps
-- Bullet points identifying crucial JD requirements that are missing, weak, or not demonstrated in the resume context.
-
-### 4. Actionable Resume Optimization Advice
-- 2-3 concrete tips on how the candidate can tailor or enhance their resume for this specific position.
-
-### 5. Recommended Interview Verification Questions
-- 2 targeted technical or behavioral questions to probe borderline or unconfirmed areas during an interview.
-"""
-
-                completion = groq_client.chat.completions.create(
-                    model=model_choice,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    temperature=0.2,
-                    max_tokens=2048,
-                )
-                
-                evaluation_text = completion.choices[0].message.content
-                status_box.update(label="✅ Evaluation completed successfully!", state="complete", expanded=False)
-                
-                # Save results to session state
-                st.session_state.last_evaluation = evaluation_text
-                st.session_state.last_context = retrieved_docs
-                st.session_state.stats = {
-                    "pages": num_pages,
-                    "chunks": len(cv_chunks),
-                    "retrieved": len(retrieved_docs),
-                    "model": model_choice
-                }
+                # Display Results
+                st.success("Evaluation Complete!")
+                st.markdown("### Evaluation Report")
+                st.markdown(response.text)
                 
             except Exception as e:
                 status_box.update(label="❌ Evaluation error", state="error")

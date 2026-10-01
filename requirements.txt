@@ -3,4 +3,5 @@ groq
 chromadb
 pdfplumber
 protobuf<5.0.0
-python-dotenv
+pysqlite3-binary
+groq
