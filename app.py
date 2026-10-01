@@ -1,189 +1,283 @@
-__import__('pysqlite3')
-import sys
-sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+# ==========================================
+# 0. SQLite Compatibility Patch (for Linux/Streamlit Cloud)
+# ==========================================
+try:
+    __import__('pysqlite3')
+    import sys
+    sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+except (ImportError, KeyError):
+    pass
 
-import streamlit as st
-import pdfplumber
-import streamlit as st
-import pdfplumber
-import chromadb
-from google import genai
 import os
 import time
+import pdfplumber
+import streamlit as st
+import chromadb
+from groq import Groq
+from dotenv import load_dotenv
+
+from ui import (
+    apply_custom_css,
+    render_hero_header,
+    render_setup_banner,
+    render_sidebar,
+    render_inputs,
+    render_results
+)
+
+# Load environment variables if .env file exists
+load_dotenv()
 
 # ==========================================
-# 1. Configuration & Setup
+# 1. Groq API Key Configuration
 # ==========================================
-st.set_page_config(page_title="AI Resume Evaluator", page_icon="📄")
-st.title("📄 AI Resume Evaluator ")
-st.write("Upload your CV or Resume and paste a Job Description to see if you are a match!")
+# You can set your Groq API key in .env (GROQ_API_KEY=gsk_...) or below
+FIXED_GROQ_API_KEY = ""
 
-# Input for Google API Key
-api_key = st.text_input("Enter your Google Gemini API Key:", type="password")
+def resolve_groq_api_key() -> str:
+    env_key = os.environ.get("GROQ_API_KEY", "").strip()
+    if env_key and not env_key.startswith("gsk_your_groq"):
+        return env_key
+    
+    if FIXED_GROQ_API_KEY and not FIXED_GROQ_API_KEY.startswith("gsk_YourFixed"):
+        return FIXED_GROQ_API_KEY.strip()
+    
+    try:
+        if hasattr(st, "secrets") and "GROQ_API_KEY" in st.secrets:
+            secret_key = str(st.secrets["GROQ_API_KEY"]).strip()
+            if secret_key:
+                return secret_key
+    except Exception:
+        pass
+        
+    return ""
 
 # ==========================================
-# 2. Helper Functions
+# 2. Page Configuration & Custom Light Theme CSS
 # ==========================================
-def extract_text_from_pdf(file):
-    """Extracts text from an uploaded PDF file."""
+st.set_page_config(
+    page_title="AI Resume Evaluator | RAG Powered",
+    page_icon="💼",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Apply Custom CSS from ui.py
+apply_custom_css()
+
+# ==========================================
+# 3. Helper Functions
+# ==========================================
+def extract_text_from_pdf(file) -> tuple[str, int]:
+    """Extracts text from an uploaded PDF file and returns (text, page_count)."""
     text = ""
-    with pdfplumber.open(file) as pdf:
-        for page in pdf.pages:
-            extracted = page.extract_text()
-            if extracted:
-                text += extracted + "\n"
-    return text
+    page_count = 0
+    try:
+        with pdfplumber.open(file) as pdf:
+            page_count = len(pdf.pages)
+            for page in pdf.pages:
+                extracted = page.extract_text()
+                if extracted:
+                    text += extracted + "\n\n"
+    except Exception as e:
+        st.error(f"Error reading PDF file: {e}")
+    return text.strip(), page_count
 
-def chunk_text(text, chunk_size=500):
-    """Splits the resume text into smaller, manageable chunks."""
-    # A simple chunking strategy splitting by double newlines (paragraphs)
+def chunk_text(text: str, chunk_size: int = 500) -> list[str]:
+    """Splits the resume text into semantically cohesive, manageable chunks."""
     paragraphs = text.split('\n\n')
     chunks = []
     current_chunk = ""
     
     for p in paragraphs:
+        p = p.strip()
+        if not p:
+            continue
         if len(current_chunk) + len(p) < chunk_size:
-            current_chunk += p + "\n"
+            current_chunk += (p + "\n\n")
         else:
-            chunks.append(current_chunk.strip())
-            current_chunk = p + "\n"
-    if current_chunk:
+            if current_chunk.strip():
+                chunks.append(current_chunk.strip())
+            current_chunk = p + "\n\n"
+            
+    if current_chunk.strip():
         chunks.append(current_chunk.strip())
     
-    # Filter out empty chunks
-    return [c for c in chunks if len(c) > 10]
+    # Fallback to line splitting if paragraphs are very large
+    if len(chunks) <= 1 and len(text) > chunk_size:
+        lines = text.split('\n')
+        chunks = []
+        current_chunk = ""
+        for line in lines:
+            if len(current_chunk) + len(line) < chunk_size:
+                current_chunk += (line + " ")
+            else:
+                if current_chunk.strip():
+                    chunks.append(current_chunk.strip())
+                current_chunk = line + " "
+        if current_chunk.strip():
+            chunks.append(current_chunk.strip())
 
-def get_embeddings(texts, client):
-    """Generates vector embeddings using Gemini."""
-    response = client.models.embed_content(
-        model='gemini-embedding-2',
-        contents=texts
-    )
-    return [e.values for e in response.embeddings]
+    return [c for c in chunks if len(c) > 15]
 
 # ==========================================
-# 3. Main UI & App Logic
+# 4. UI Layout & Controls (via ui.py)
 # ==========================================
-col1, col2 = st.columns(2)
+api_key = resolve_groq_api_key()
+is_key_configured = bool(api_key)
 
-with col1:
-    uploaded_file = st.file_uploader("1. Upload your CV/Resume (PDF)", type="pdf")
+# Render Sidebar & Model Settings
+model_choice, top_k_chunks = render_sidebar(is_key_configured)
 
-with col2:
-    job_description = st.text_area("2. Paste the Job Description here", height=150)
+# Render Hero Banner & Setup Notification
+render_hero_header()
+if not is_key_configured:
+    render_setup_banner()
 
-if st.button("Evaluate My CV/Resume"):
+# Render File Upload & Job Description
+uploaded_file, job_description, evaluate_btn = render_inputs()
+
+# ==========================================
+# 5. Evaluation Logic
+# ==========================================
+if evaluate_btn:
     if not api_key:
-        st.error("Please enter your Google API Key.")
+        st.error("❌ Groq API Key is missing. Please add your key to `.env` (`GROQ_API_KEY=gsk_...`) or `FIXED_GROQ_API_KEY` in `app.py`.")
     elif not uploaded_file:
-        st.error("Please upload a cv/resume.")
-    elif not job_description:
-        st.error("Please paste a job description.")
+        st.error("⚠️ Please upload a candidate CV / Resume (PDF).")
+    elif not job_description.strip():
+        st.error("⚠️ Please provide a Job Description.")
     else:
-        with st.spinner("Analyzing your profile..."):
+        with st.status("🔍 Analyzing Resume & Evaluating Compatibility...", expanded=True) as status_box:
             try:
-                # Initialize Gemini Client
-                client = genai.Client(api_key=api_key)
+                # Step 1: PDF Extraction
+                status_box.update(label="📄 Extracting text from PDF resume...", state="running")
+                cv_text, num_pages = extract_text_from_pdf(uploaded_file)
                 
-                # Step 1: Extract and Chunk CV
-                cv_text = extract_text_from_pdf(uploaded_file)
+                if not cv_text or len(cv_text.strip()) < 40:
+                    status_box.update(label="Failed to extract readable text", state="error")
+                    st.error("Could not extract readable text from the uploaded PDF. Please ensure the PDF contains selectable text.")
+                    st.stop()
+                
+                # Step 2: Semantic Chunking
+                status_box.update(label="✂️ Segmenting resume into semantic chunks...", state="running")
                 cv_chunks = chunk_text(cv_text)
                 
-                # Step 2: Embed CV Chunks
-                embeddings = get_embeddings(cv_chunks, client)
+                if not cv_chunks:
+                    cv_chunks = [cv_text]
                 
-                # Step 3: Store in Ephemeral (In-Memory) ChromaDB
+                # Step 3: Vector Indexing with ChromaDB
+                status_box.update(label="🧠 Indexing chunks into ChromaDB vector store...", state="running")
                 chroma_client = chromadb.EphemeralClient()
-                collection_name = "resume_chunks"
+                collection_name = f"resume_eval_{int(time.time() * 1000)}"
                 
-                # Delete collection if it exists from a previous run in the same session
                 try:
                     chroma_client.delete_collection(name=collection_name)
                 except Exception:
                     pass
                 
                 collection = chroma_client.create_collection(name=collection_name)
+                chunk_ids = [f"chunk_{i}" for i in range(len(cv_chunks))]
                 
-                # Prepare IDs for ChromaDB
-                ids = [f"chunk_{i}" for i in range(len(cv_chunks))]
-                
-                # Add data to Vector DB
+                # ChromaDB computes embeddings with default all-MiniLM-L6-v2
                 collection.add(
                     documents=cv_chunks,
-                    embeddings=embeddings,
-                    ids=ids
+                    ids=chunk_ids
                 )
                 
-                # Step 4: Retrieve relevant CV chunks using the Job Description as a query
-                # We embed the JD to find the closest matching skills/experiences in the CV
-                jd_embedding = get_embeddings([job_description], client)[0]
-                
-                results = collection.query(
-                    query_embeddings=[jd_embedding],
-                    n_results=5 # Retrieve the top 5 most relevant chunks
+                # Step 4: Semantic Query Retrieval
+                status_box.update(label="🎯 Retrieving top matching resume sections for the JD...", state="running")
+                effective_k = min(top_k_chunks, len(cv_chunks))
+                query_results = collection.query(
+                    query_texts=[job_description],
+                    n_results=effective_k
                 )
                 
-                retrieved_context = "\n\n---\n\n".join(results['documents'][0])
+                retrieved_docs = query_results.get('documents', [[]])[0]
+                retrieved_context = "\n\n---\n\n".join(retrieved_docs)
+                
+                # Step 5: Groq LLM Inference
+                status_box.update(label=f"⚡ Generating assessment with Groq ({model_choice})...", state="running")
+                groq_client = Groq(api_key=api_key)
+                
+                system_prompt = (
+                    "You are a Senior Technical Recruiter and Hiring Lead. "
+                    "Evaluate candidate resumes against job descriptions thoroughly, objectively, and constructively."
+                )
+                
+                user_prompt = f"""
+Analyze the candidate's resume snippets retrieved via semantic search against the provided Job Description.
 
-                #cooldown
-                st.info("Taking a brief pause to respect API speed limits...")
-                time.sleep(10) # Pauses the script for 10 seconds
-                
-                # Step 5: Generate Final Assessment with Gemini
-                prompt = f"""
-                You are an expert technical recruiter and HR evaluator. 
-                I will provide you with a Job Description and relevant snippets retrieved from a candidate's resume.
-                
-                Your task is to analyze if the candidate is qualified for the role.
-                
-                **Job Description:**
-                {job_description}
-                
-                **Retrieved Resume Context:**
-                {retrieved_context}
-                
-                **Please provide your output in the following format:**
-                1. **Overall Verdict:** (Are they a strong, partial, or weak match?)
-                2. **Skills Met:** (List the requirements from the JD that are explicitly found in the resume)
-                3. **Missing Skills:** (List the crucial requirements from the JD that are NOT found in the resume context)
-                4. **Advice:** (One sentence on how they can improve their resume for this specific role)
-                """
-                # --- AUTO-RETRY LOGIC ---
-                max_retries = 3
-                for attempt in range(max_retries):
-                    try:
-                        response = client.models.generate_content(
-                            model='gemini-2.5-flash',
-                            contents=prompt
-                        )
-                        # Display Results if successful
-                        st.success("Evaluation Complete!")
-                        st.markdown("### Evaluation Report")
-                        st.markdown(response.text)
-                        break # Break out of the loop on success
-                        
-                    except Exception as e:
-                        error_msg = str(e)
-                        if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-                            if attempt < max_retries - 1:
-                                st.warning(f"Google API is catching its breath. Retrying in 10 seconds... (Attempt {attempt + 1}/{max_retries})")
-                                time.sleep(10)
-                            else:
-                                st.error("The API is too busy right now. Please wait a minute and try again.")
-                        else:
-                            # If it's a completely different error, show it
-                            st.error(f"An unexpected error occurred: {e}")
-                            break
-                            
-                response = client.models.generate_content(
-                    model='gemini-2.0-flash',
-                    contents=prompt
+=========================
+JOB DESCRIPTION:
+=========================
+{job_description}
+
+=========================
+RELEVANT RESUME CONTEXT (Retrieved from Candidate CV):
+=========================
+{retrieved_context}
+
+=========================
+FULL RESUME PREVIEW:
+=========================
+{cv_text[:1500]}
+
+=========================
+EVALUATION FORMAT:
+=========================
+Please evaluate the candidate strictly following this structured markdown format:
+
+### 1. Overall Match Verdict
+- **Match Level**: [Strong Match (80-100%) | Moderate Match (50-79%) | Weak Match (<50%)]
+- **Executive Summary**: 2-3 concise sentences summarizing the candidate's overall qualification and alignment for this role.
+
+### 2. Key Qualifications & Skills Met
+- Bullet points listing the specific skills, tools, experience levels, and certifications explicitly found in the resume matching the JD requirements.
+
+### 3. Missing Requirements & Skill Gaps
+- Bullet points identifying crucial JD requirements that are missing, weak, or not demonstrated in the resume context.
+
+### 4. Actionable Resume Optimization Advice
+- 2-3 concrete tips on how the candidate can tailor or enhance their resume for this specific position.
+
+### 5. Recommended Interview Verification Questions
+- 2 targeted technical or behavioral questions to probe borderline or unconfirmed areas during an interview.
+"""
+
+                completion = groq_client.chat.completions.create(
+                    model=model_choice,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=0.2,
+                    max_tokens=2048,
                 )
                 
-                # Display Results
-                st.success("Evaluation Complete!")
-                st.markdown("### Evaluation Report")
-                st.markdown(response.text)
+                evaluation_text = completion.choices[0].message.content
+                status_box.update(label="✅ Evaluation completed successfully!", state="complete", expanded=False)
+                
+                # Save results to session state
+                st.session_state.last_evaluation = evaluation_text
+                st.session_state.last_context = retrieved_docs
+                st.session_state.stats = {
+                    "pages": num_pages,
+                    "chunks": len(cv_chunks),
+                    "retrieved": len(retrieved_docs),
+                    "model": model_choice
+                }
                 
             except Exception as e:
-                st.error(f"An error occurred: {e}")
+                status_box.update(label="❌ Evaluation error", state="error")
+                st.error(f"Error during evaluation: {str(e)}")
+
+# ==========================================
+# 8. Render Results
+# ==========================================
+if "last_evaluation" in st.session_state and st.session_state.last_evaluation:
+    render_results(
+        st.session_state.last_evaluation,
+        st.session_state.get("last_context", []),
+        st.session_state.get("stats", {})
+    )
