@@ -180,7 +180,7 @@ LOCALLY IDENTIFIED MATCHING CV EVIDENCE:
 LOCAL PRE-CHECK:
 {local_report}
 
-Return concise Markdown with exactly these sections:
+Return complete, concise Markdown with exactly these sections. Finish every bullet and sentence before ending:
 ### 1. Overall Match Verdict
 Include Strong, Moderate, or Weak Match and a percentage estimate with a 2-3 sentence summary.
 ### 2. What Fits
@@ -200,7 +200,7 @@ Give 3 concrete, honest suggestions, including what evidence or keywords to add.
             {"role": "user", "content": prompt},
         ],
         temperature=0.2,
-        max_tokens=1200,
+        max_tokens=1800,
     )
     content = completion.choices[0].message.content
     if not content:
