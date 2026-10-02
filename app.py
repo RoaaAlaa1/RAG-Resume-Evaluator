@@ -1,5 +1,7 @@
 import os
 import re
+from pathlib import Path
+
 import pdfplumber
 import streamlit as st
 from dotenv import load_dotenv
@@ -12,7 +14,8 @@ from ui import (
     render_results,
 )
 
-load_dotenv()
+DOTENV_PATH = Path(__file__).resolve().with_name(".env")
+load_dotenv(dotenv_path=DOTENV_PATH, override=True)
 
 
 st.set_page_config(page_title="AI Resume Evaluator", page_icon="📄", layout="wide")
@@ -146,10 +149,11 @@ def generate_groq_report(
     retrieved_context: list[str],
 ) -> str:
     """Generate a structured recruiter report using the server-configured Groq key."""
-    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    api_key = os.getenv("GROQ_API_KEY", "").strip().strip("\"'")
     if not api_key or api_key.startswith("gsk_your_"):
         raise RuntimeError(
-            "GROQ_API_KEY is missing. Add your Groq key to the root .env file and restart Streamlit."
+            f"GROQ_API_KEY was not loaded from {DOTENV_PATH}. "
+            "Check that the variable name is exact and restart Streamlit."
         )
 
     client = Groq(api_key=api_key)
