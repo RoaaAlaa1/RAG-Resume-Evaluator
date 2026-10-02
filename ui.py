@@ -50,19 +50,6 @@ def apply_custom_css():
             margin: 0;
             line-height: 1.5;
         }
-        .badge-pill {
-            display: inline-flex;
-            align-items: center;
-            padding: 4px 12px;
-            background-color: #eff6ff;
-            color: #2563eb;
-            border: 1px solid #dbeafe;
-            border-radius: 9999px;
-            font-size: 12px;
-            font-weight: 600;
-            letter-spacing: 0.02em;
-        }
-
         .section-title {
             font-size: 15px;
             font-weight: 700;
@@ -136,9 +123,6 @@ def render_hero_header():
                     Compare your CV with a job description locally and get clear gaps and improvement tips.
                 </p>
             </div>
-            <div>
-                <span class="badge-pill">🔒 Private Local Analysis</span>
-            </div>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -162,6 +146,12 @@ def render_sidebar():
             
 def render_inputs():
     """Renders the two-column inputs and evaluation trigger button."""
+    if "job_description_input" not in st.session_state:
+        st.session_state.job_description_input = ""
+
+    def load_sample_job_description():
+        st.session_state.job_description_input = SAMPLE_JOB_DESCRIPTION
+
     col1, col2 = st.columns([1, 1], gap="large")
 
     with col1:
@@ -180,15 +170,14 @@ def render_inputs():
     with col2:
         st.markdown('<div class="section-title"><span>🎯 2. Target Job Description</span></div>', unsafe_allow_html=True)
         
-        if st.button("✨ Load Sample Job Description", key="sample_jd_btn"):
-            st.session_state.jd_text = SAMPLE_JOB_DESCRIPTION
-        
-        if "jd_text" not in st.session_state:
-            st.session_state.jd_text = ""
+        st.button(
+            "✨ Load Sample Job Description",
+            key="sample_jd_btn",
+            on_click=load_sample_job_description,
+        )
             
         job_description = st.text_area(
             "Paste the Job Description",
-            value=st.session_state.jd_text,
             key="job_description_input",
             height=160,
             placeholder="Paste target job responsibilities, skills, and qualifications here...",
