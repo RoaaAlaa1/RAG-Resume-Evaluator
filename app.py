@@ -260,7 +260,7 @@ Please evaluate the candidate strictly following this structured markdown format
                 st.error(f"Error during evaluation: {str(e)}")
 
 # ==========================================
-# 6. Render Results (via ui.py)
+# 8. Render Results
 # ==========================================
 if "last_evaluation" in st.session_state and st.session_state.last_evaluation:
     render_results(
