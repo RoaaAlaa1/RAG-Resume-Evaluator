@@ -221,7 +221,7 @@ def render_results(evaluation_text: str, retrieved_docs: list, stats: dict):
         st.markdown(f"""
         <div class="metric-box">
             <div class="metric-value" style="font-size: 14px; padding-top: 5px;">🔒 Local</div>
-            <div class="metric-label">{stats.get('model', 'Llama-3.3')}</div>
+            <div class="metric-label">{stats.get('model', 'Llama-3.1')}</div>
         </div>
         """, unsafe_allow_html=True)
     

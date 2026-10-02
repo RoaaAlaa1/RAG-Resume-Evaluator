@@ -191,7 +191,7 @@ List requirements not demonstrated or only weakly supported. Do not claim a skil
 Give 3 concrete, honest suggestions, including what evidence or keywords to add.
 """
     completion = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="llama-3.1-8b-instant",
         messages=[
             {
                 "role": "system",
@@ -241,7 +241,7 @@ if evaluate_btn:
                             "pages": page_count,
                             "chunks": comparison["requirements"],
                             "retrieved": len(retrieved_context),
-                            "model": "Groq / Llama 3.3 70B",
+                            "model": "Groq / Llama 3.1 8B",
                         },
                     )
                 except Exception as exc:
