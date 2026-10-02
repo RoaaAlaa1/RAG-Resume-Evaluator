@@ -117,10 +117,8 @@ The app will open automatically in your browser at:
    - Click **"✨ Load Sample Job Description"** for a quick demonstration.
 3. **Evaluate**: Click **"⚡ Evaluate Candidate Match"**.
 5. **Review Report**:
-   - **Metrics Row**: Resume pages, extracted requirements, matched evidence, and local match percentage.
    - **Detailed Assessment**: Overall Match Verdict (Strong, Moderate, Weak), fitting requirements, missing requirements, and optimization advice.
    - **Download**: Export the report with **"📥 Download Full Assessment (.md)"**.
-   - **Inspect Context**: View CV lines supporting the detected matches in the **Retrieved Resume Context** tab.
 
 ---
 

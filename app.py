@@ -219,14 +219,14 @@ if evaluate_btn:
         st.error("Please provide a job description or load the example.")
     else:
         with st.status("Analyzing your CV against the job description...", expanded=True) as status:
-            cv_text, page_count = extract_text_from_pdf(uploaded_file)
+            cv_text, _ = extract_text_from_pdf(uploaded_file)
             if not cv_text or len(cv_text) < 40:
                 status.update(label="Could not extract readable text", state="error")
                 st.error("This PDF does not contain enough selectable text. Please upload a searchable PDF.")
             else:
                 try:
                     status.update(label="Preparing CV evidence...", state="running")
-                    local_report, retrieved_context, comparison = build_local_report(
+                    local_report, retrieved_context, _ = build_local_report(
                         cv_text, job_description
                     )
                     status.update(label="Generating report with Groq...", state="running")
@@ -234,16 +234,7 @@ if evaluate_btn:
                         cv_text, job_description, local_report, retrieved_context
                     )
                     status.update(label="Report ready", state="complete", expanded=False)
-                    render_results(
-                        report,
-                        retrieved_context,
-                        {
-                            "pages": page_count,
-                            "chunks": comparison["requirements"],
-                            "retrieved": len(retrieved_context),
-                            "model": "Groq / GPT OSS 20B",
-                        },
-                    )
+                    render_results(report)
                 except Exception as exc:
                     status.update(label="Could not generate report", state="error")
                     st.error(f"Evaluation failed: {exc}")

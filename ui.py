@@ -60,28 +60,6 @@ def apply_custom_css():
             gap: 8px;
         }
 
-        /* Metric Boxes */
-        .metric-box {
-            background: #ffffff;
-            border: 1px solid #e2e8f0;
-            border-radius: 12px;
-            padding: 14px 16px;
-            text-align: center;
-            box-shadow: 0 2px 6px -1px rgba(0, 0, 0, 0.02);
-        }
-        .metric-value {
-            font-size: 20px;
-            font-weight: 800;
-            color: #2563eb;
-        }
-        .metric-label {
-            font-size: 11px;
-            font-weight: 600;
-            color: #64748b;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-
         /* Primary Action Button */
         div.stButton > button:first-child {
             background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
@@ -189,62 +167,16 @@ def render_inputs():
     
     return uploaded_file, job_description, evaluate_btn
 
-def render_results(evaluation_text: str, retrieved_docs: list, stats: dict):
-    """Renders the evaluation report, metrics, and context inspection tabs."""
+def render_results(evaluation_text: str):
+    """Renders the evaluation report and download action."""
     st.markdown("---")
     st.subheader("📊 Candidate Compatibility Report")
-    
-    # Metrics Row
-    mcol1, mcol2, mcol3, mcol4 = st.columns(4)
-    with mcol1:
-        st.markdown(f"""
-        <div class="metric-box">
-            <div class="metric-value">{stats.get('pages', 1)}</div>
-            <div class="metric-label">Resume Pages</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with mcol2:
-        st.markdown(f"""
-        <div class="metric-box">
-            <div class="metric-value">{stats.get('chunks', 0)}</div>
-            <div class="metric-label">Semantic Chunks</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with mcol3:
-        st.markdown(f"""
-        <div class="metric-box">
-            <div class="metric-value">{stats.get('retrieved', 0)}</div>
-            <div class="metric-label">Matches Retrieved</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with mcol4:
-        st.markdown(f"""
-        <div class="metric-box">
-            <div class="metric-value" style="font-size: 14px; padding-top: 5px;">🔒 Local</div>
-            <div class="metric-label">{stats.get('model', 'GPT OSS 20B')}</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
+    st.markdown(evaluation_text)
     st.markdown("<br>", unsafe_allow_html=True)
-    
-    tab1, tab2 = st.tabs(["📑 Detailed Assessment", "🔍 Retrieved Resume Context"])
-    
-    with tab1:
-        st.markdown(evaluation_text)
-        
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.download_button(
-            label="📥 Download Full Assessment (.md)",
-            data=evaluation_text,
-            file_name="resume_evaluation_report.md",
-            mime="text/markdown",
-            use_container_width=True
-        )
-        
-    with tab2:
-        st.markdown("#### 📌 Top Matching Resume Excerpts")
-        st.caption("The vector database retrieved these specific sections from the candidate's CV as most relevant to the JD:")
-        
-        for idx, doc in enumerate(retrieved_docs, start=1):
-            with st.expander(f"Snippet #{idx}", expanded=(idx == 1)):
-                st.markdown(f"```text\n{doc}\n```")
+    st.download_button(
+        label="📥 Download Full Assessment (.md)",
+        data=evaluation_text,
+        file_name="resume_evaluation_report.md",
+        mime="text/markdown",
+        use_container_width=True,
+    )
