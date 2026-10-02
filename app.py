@@ -199,7 +199,7 @@ Give 3 concrete, honest suggestions, including what evidence or keywords to add.
             },
             {"role": "user", "content": prompt},
         ],
-        temperature=0.2,
+        temperature=0,
         max_tokens=1800,
     )
     content = completion.choices[0].message.content
