@@ -1,270 +1,237 @@
-# ==========================================
-# 0. SQLite Compatibility Patch (for Linux/Streamlit Cloud)
-# ==========================================
-try:
-    __import__('pysqlite3')
-    import sys
-    sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
-except (ImportError, KeyError):
-    pass
-
 import os
-import time
+import re
 import pdfplumber
 import streamlit as st
-import chromadb
-from groq import Groq
 from dotenv import load_dotenv
+from groq import Groq
 
 from ui import (
     apply_custom_css,
     render_hero_header,
-    render_setup_banner,
-    render_sidebar,
     render_inputs,
-    render_results
+    render_results,
 )
 
-# Load environment variables from .env
 load_dotenv()
 
-# ==========================================
-# 1. Groq API Key Configuration
-# ==========================================
-FIXED_GROQ_API_KEY = ""
 
-def resolve_groq_api_key() -> str:
-    """Resolves the Groq API key from .env, fixed constant, or Streamlit secrets."""
-    env_key = os.environ.get("GROQ_API_KEY", "").strip()
-    if env_key and not env_key.startswith("gsk_your_groq"):
-        return env_key
-    
-    if FIXED_GROQ_API_KEY and not FIXED_GROQ_API_KEY.startswith("gsk_YourFixed"):
-        return FIXED_GROQ_API_KEY.strip()
-    
-    try:
-        if hasattr(st, "secrets") and "GROQ_API_KEY" in st.secrets:
-            secret_key = str(st.secrets["GROQ_API_KEY"]).strip()
-            if secret_key:
-                return secret_key
-    except Exception:
-        pass
-        
-    return ""
+st.set_page_config(page_title="AI Resume Evaluator", page_icon="📄", layout="wide")
 
-# ==========================================
-# 3. Helper Functions
-# ==========================================
+
 def extract_text_from_pdf(file) -> tuple[str, int]:
-    """Extracts text from an uploaded PDF file and returns (text, page_count)."""
-    text = ""
-    page_count = 0
+    """Extract selectable text from an uploaded PDF."""
+    text_parts = []
     try:
         with pdfplumber.open(file) as pdf:
-            page_count = len(pdf.pages)
             for page in pdf.pages:
-                extracted = page.extract_text()
-                if extracted:
-                    text += extracted + "\n\n"
-    except Exception as e:
-        st.error(f"Error reading PDF file: {e}")
-    return text.strip(), page_count
+                page_text = page.extract_text()
+                if page_text:
+                    text_parts.append(page_text)
+            return "\n\n".join(text_parts).strip(), len(pdf.pages)
+    except Exception as exc:
+        st.error(f"Could not read the PDF: {exc}")
+        return "", 0
 
-def chunk_text(text: str, chunk_size: int = 500) -> list[str]:
-    """Splits the resume text into semantically cohesive, manageable chunks."""
-    paragraphs = text.split('\n\n')
-    chunks = []
-    current_chunk = ""
-    
-    for p in paragraphs:
-        p = p.strip()
-        if not p:
+
+def _normalise(text: str) -> str:
+    return re.sub(r"\s+", " ", text.lower()).strip()
+
+
+def _requirements(job_description: str) -> list[str]:
+    """Extract useful requirement phrases from bullets and sentence fragments."""
+    candidates = []
+    for line in job_description.splitlines():
+        cleaned = re.sub(r"^[\s>*\-•\d.)]+", "", line).strip()
+        if cleaned:
+            candidates.extend(re.split(r"[.;]", cleaned))
+
+    if not candidates:
+        candidates = re.split(r"[.;\n]", job_description)
+
+    requirements = []
+    seen = set()
+    for candidate in candidates:
+        phrase = re.sub(r"\s+", " ", candidate).strip(" ,:")
+        if (
+            len(phrase) < 3
+            or len(phrase.split()) > 18
+            or phrase.lower() in {"requirements", "qualifications", "responsibilities", "preferred qualifications"}
+        ):
             continue
-        if len(current_chunk) + len(p) < chunk_size:
-            current_chunk += (p + "\n\n")
+        key = _normalise(phrase)
+        if key not in seen:
+            seen.add(key)
+            requirements.append(phrase)
+    return requirements
+
+
+def _keywords(text: str) -> list[str]:
+    """Return meaningful terms, retaining technical names such as C++ and .NET."""
+    stop_words = {
+        "with", "and", "the", "for", "from", "that", "this", "have", "your",
+        "years", "year", "experience", "strong", "skills", "skill", "ability",
+        "work", "working", "using", "knowledge", "understanding", "including",
+        "professional", "excellent", "good", "role", "team", "teams",
+    }
+    words = re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]{1,}", text.lower())
+    return list(dict.fromkeys(word for word in words if word not in stop_words and len(word) > 2))
+
+
+def build_local_report(cv_text: str, job_description: str) -> tuple[str, list[str], dict]:
+    """Build local matching context to ground the Groq-generated report."""
+    cv_lower = _normalise(cv_text)
+    requirements = _requirements(job_description)
+    matched = []
+    missing = []
+
+    for requirement in requirements:
+        terms = _keywords(requirement)
+        meaningful_terms = [term for term in terms if len(term) > 3]
+        if cv_lower and (
+            _normalise(requirement) in cv_lower
+            or (meaningful_terms and sum(term in cv_lower for term in meaningful_terms) >= max(1, len(meaningful_terms) // 2))
+        ):
+            matched.append(requirement)
         else:
-            if current_chunk.strip():
-                chunks.append(current_chunk.strip())
-            current_chunk = p + "\n\n"
-            
-    if current_chunk.strip():
-        chunks.append(current_chunk.strip())
-    
-    # Fallback to line splitting if paragraphs are very large
-    if len(chunks) <= 1 and len(text) > chunk_size:
-        lines = text.split('\n')
-        chunks = []
-        current_chunk = ""
-        for line in lines:
-            if len(current_chunk) + len(line) < chunk_size:
-                current_chunk += (line + " ")
-            else:
-                if current_chunk.strip():
-                    chunks.append(current_chunk.strip())
-                current_chunk = line + " "
-        if current_chunk.strip():
-            chunks.append(current_chunk.strip())
+            missing.append(requirement)
 
-    return [c for c in chunks if len(c) > 15]
-
-# ==========================================
-# 4. UI Layout & Controls (via ui.py)
-# ==========================================
-api_key = resolve_groq_api_key()
-is_key_configured = bool(api_key)
-
-# Render Sidebar & Model Settings
-model_choice, top_k_chunks = render_sidebar(is_key_configured)
-
-# Render Hero Banner & Setup Notification
-render_hero_header()
-if not is_key_configured:
-    render_setup_banner()
-
-# Render File Upload & Job Description
-uploaded_file, job_description, evaluate_btn = render_inputs()
-
-# ==========================================
-# 5. Evaluation Logic
-# ==========================================
-if evaluate_btn:
-    if not api_key:
-        st.error("❌ Groq API Key is missing. Please add your key to `.env` (`GROQ_API_KEY=gsk_...`) or `FIXED_GROQ_API_KEY` in `app.py`.")
-    elif not uploaded_file:
-        st.error("⚠️ Please upload a candidate CV / Resume (PDF).")
-    elif not job_description.strip():
-        st.error("⚠️ Please provide a Job Description.")
+    total = len(matched) + len(missing)
+    score = round((len(matched) / total) * 100) if total else 0
+    if score >= 80:
+        level = "Strong Match"
+    elif score >= 50:
+        level = "Moderate Match"
     else:
-        with st.status("🔍 Analyzing Resume & Evaluating Compatibility...", expanded=True) as status_box:
-            try:
-                # Step 1: PDF Extraction
-                status_box.update(label="📄 Extracting text from PDF resume...", state="running")
-                cv_text, num_pages = extract_text_from_pdf(uploaded_file)
-                
-                if not cv_text or len(cv_text.strip()) < 40:
-                    status_box.update(label="Failed to extract readable text", state="error")
-                    st.error("Could not extract readable text from the uploaded PDF. Please ensure the PDF contains selectable text.")
-                    st.stop()
-                
-                # Step 2: Semantic Chunking
-                status_box.update(label="✂️ Segmenting resume into semantic chunks...", state="running")
-                cv_chunks = chunk_text(cv_text)
-                
-                if not cv_chunks:
-                    cv_chunks = [cv_text]
-                
-                # Step 3: Vector Indexing with ChromaDB
-                status_box.update(label="🧠 Indexing chunks into ChromaDB vector store...", state="running")
-                chroma_client = chromadb.EphemeralClient()
-                collection_name = f"resume_eval_{int(time.time() * 1000)}"
-                
-                try:
-                    chroma_client.delete_collection(name=collection_name)
-                except Exception:
-                    pass
-                
-                collection = chroma_client.create_collection(name=collection_name)
-                chunk_ids = [f"chunk_{i}" for i in range(len(cv_chunks))]
-                
-                # ChromaDB computes embeddings with default all-MiniLM-L6-v2
-                collection.add(
-                    documents=cv_chunks,
-                    ids=chunk_ids
-                )
-                
-                # Step 4: Semantic Query Retrieval
-                status_box.update(label="🎯 Retrieving top matching resume sections for the JD...", state="running")
-                effective_k = min(top_k_chunks, len(cv_chunks))
-                query_results = collection.query(
-                    query_texts=[job_description],
-                    n_results=effective_k
-                )
-                
-                retrieved_docs = query_results.get('documents', [[]])[0]
-                retrieved_context = "\n\n---\n\n".join(retrieved_docs)
-                
-                # Step 5: Groq LLM Inference
-                status_box.update(label=f"⚡ Generating evaluation with Groq ({model_choice})...", state="running")
-                groq_client = Groq(api_key=api_key)
-                
-                system_prompt = (
-                    "You are a Senior Technical Recruiter and Hiring Lead. "
-                    "Evaluate candidate resumes against job descriptions thoroughly, objectively, and constructively."
-                )
-                
-                user_prompt = f"""
-Analyze the candidate's resume snippets retrieved via semantic search against the provided Job Description.
+        level = "Weak Match"
 
-=========================
+    context = []
+    for line in cv_text.splitlines():
+        line = line.strip()
+        line_lower = _normalise(line)
+        if line and any(
+            any(term in line_lower for term in _keywords(requirement))
+            for requirement in matched
+        ):
+            context.append(line)
+    context = list(dict.fromkeys(context))[:8]
+
+    tips = [
+        f"Add measurable evidence (scope, impact, or results) for: {missing[0]}."
+        if missing
+        else "Quantify the impact of your strongest achievements with percentages, time saved, or scale.",
+        "Mirror the job description's wording for tools and responsibilities that you genuinely have experience with.",
+        "Keep the most relevant projects and achievements near the top of the CV so they are easy to verify.",
+    ]
+
+    report = f"""### 1. Overall Match Verdict
+- **Match Level:** {level} ({score}% of the extracted requirements found)
+- **Executive Summary:** The CV shows evidence for {len(matched)} of {total} extracted job requirements. This is a local, text-based comparison; verify borderline requirements manually.
+
+### 2. What Fits
+{chr(10).join(f"- {item}" for item in matched) or "- No requirement was clearly demonstrated in the CV text."}
+
+### 3. What Is Missing or Unclear
+{chr(10).join(f"- {item}" for item in missing) or "- No major gaps were found by the text comparison."}
+
+### 4. Tips to Improve the CV
+{chr(10).join(f"- {tip}" for tip in tips)}
+"""
+    return report, context, {"score": score, "requirements": len(requirements)}
+
+
+def generate_groq_report(
+    cv_text: str,
+    job_description: str,
+    local_report: str,
+    retrieved_context: list[str],
+) -> str:
+    """Generate a structured recruiter report using the server-configured Groq key."""
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not api_key or api_key.startswith("gsk_your_"):
+        raise RuntimeError(
+            "GROQ_API_KEY is missing. Add your Groq key to the root .env file and restart Streamlit."
+        )
+
+    client = Groq(api_key=api_key)
+    context = "\n".join(f"- {line}" for line in retrieved_context) or "- No matching CV excerpts were found."
+    prompt = f"""Evaluate this candidate CV against the job description. Use only evidence present in the CV.
+
 JOB DESCRIPTION:
-=========================
 {job_description}
 
-=========================
-RELEVANT RESUME CONTEXT (Retrieved from Candidate CV):
-=========================
-{retrieved_context}
+CV:
+{cv_text[:12000]}
 
-=========================
-FULL RESUME PREVIEW:
-=========================
-{cv_text[:1500]}
+LOCALLY IDENTIFIED MATCHING CV EVIDENCE:
+{context}
 
-=========================
-EVALUATION FORMAT:
-=========================
-Please evaluate the candidate strictly following this structured markdown format:
+LOCAL PRE-CHECK:
+{local_report}
 
+Return concise Markdown with exactly these sections:
 ### 1. Overall Match Verdict
-- **Match Level**: [Strong Match (80-100%) | Moderate Match (50-79%) | Weak Match (<50%)]
-- **Executive Summary**: 2-3 concise sentences summarizing the candidate's overall qualification and alignment for this role.
-
-### 2. Key Qualifications & Skills Met
-- Bullet points listing the specific skills, tools, experience levels, and certifications explicitly found in the resume matching the JD requirements.
-
-### 3. Missing Requirements & Skill Gaps
-- Bullet points identifying crucial JD requirements that are missing, weak, or not demonstrated in the resume context.
-
-### 4. Actionable Resume Optimization Advice
-- 2-3 concrete tips on how the candidate can tailor or enhance their resume for this specific position.
-
-### 5. Recommended Interview Verification Questions
-- 2 targeted technical or behavioral questions to probe borderline or unconfirmed areas during an interview.
+Include Strong, Moderate, or Weak Match and a percentage estimate with a 2-3 sentence summary.
+### 2. What Fits
+List specific job requirements supported by the CV.
+### 3. What Is Missing or Unclear
+List requirements not demonstrated or only weakly supported. Do not claim a skill is missing if the CV supports it.
+### 4. Tips to Improve the CV
+Give 3 concrete, honest suggestions, including what evidence or keywords to add.
 """
-
-                completion = groq_client.chat.completions.create(
-                    model=model_choice,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    temperature=0.2,
-                    max_tokens=2048,
-                )
-                
-                evaluation_text = completion.choices[0].message.content
-                status_box.update(label="✅ Evaluation completed successfully!", state="complete", expanded=False)
-                
-                # Save results to session state
-                st.session_state.last_evaluation = evaluation_text
-                st.session_state.last_context = retrieved_docs
-                st.session_state.stats = {
-                    "pages": num_pages,
-                    "chunks": len(cv_chunks),
-                    "retrieved": len(retrieved_docs),
-                    "model": model_choice
-                }
-                
-            except Exception as e:
-                status_box.update(label="❌ Evaluation error", state="error")
-                st.error(f"Error during evaluation: {str(e)}")
-
-# ==========================================
-# 8. Render Results
-# ==========================================
-if "last_evaluation" in st.session_state and st.session_state.last_evaluation:
-    render_results(
-        st.session_state.last_evaluation,
-        st.session_state.get("last_context", []),
-        st.session_state.get("stats", {})
+    completion = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a careful technical recruiter. Be evidence-based and constructive.",
+            },
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.2,
+        max_tokens=1800,
     )
+    content = completion.choices[0].message.content
+    if not content:
+        raise RuntimeError("Groq returned an empty evaluation.")
+    return content
+
+
+apply_custom_css()
+render_hero_header()
+uploaded_file, job_description, evaluate_btn = render_inputs()
+
+if evaluate_btn:
+    if not uploaded_file:
+        st.error("Please upload your CV or resume as a PDF.")
+    elif not job_description.strip():
+        st.error("Please provide a job description or load the example.")
+    else:
+        with st.status("Analyzing your CV against the job description...", expanded=True) as status:
+            cv_text, page_count = extract_text_from_pdf(uploaded_file)
+            if not cv_text or len(cv_text) < 40:
+                status.update(label="Could not extract readable text", state="error")
+                st.error("This PDF does not contain enough selectable text. Please upload a searchable PDF.")
+            else:
+                try:
+                    status.update(label="Preparing CV evidence...", state="running")
+                    local_report, retrieved_context, comparison = build_local_report(
+                        cv_text, job_description
+                    )
+                    status.update(label="Generating report with Groq...", state="running")
+                    report = generate_groq_report(
+                        cv_text, job_description, local_report, retrieved_context
+                    )
+                    status.update(label="Report ready", state="complete", expanded=False)
+                    render_results(
+                        report,
+                        retrieved_context,
+                        {
+                            "pages": page_count,
+                            "chunks": comparison["requirements"],
+                            "retrieved": len(retrieved_context),
+                            "model": "Groq / Llama 3.3 70B",
+                        },
+                    )
+                except Exception as exc:
+                    status.update(label="Could not generate report", state="error")
+                    st.error(f"Evaluation failed: {exc}")

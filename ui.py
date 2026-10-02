@@ -133,57 +133,25 @@ def render_hero_header():
                     <span>📄 AI Resume & Job Fit Evaluator</span>
                 </div>
                 <p class="hero-subtitle">
-                    Evaluate candidate-job compatibility using semantic RAG vector retrieval and Groq LLM intelligence.
+                    Compare your CV with a job description locally and get clear gaps and improvement tips.
                 </p>
             </div>
             <div>
-                <span class="badge-pill">⚡ Ultra-Fast Groq Inference</span>
+                <span class="badge-pill">🔒 Private Local Analysis</span>
             </div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-def render_setup_banner():
-    """Displays guidance when Groq API key is not yet configured."""
-    st.info("""
-    **💡 Quick Setup:**
-    Add your Groq API key to [.env](file:///R:/Uni/3rd%20Year/2nd%20term/Multi-agent%20System/RAG%20project/.env) (`GROQ_API_KEY=gsk_...`) or set `FIXED_GROQ_API_KEY` in `app.py`.
-    """)
-
-def render_sidebar(is_key_configured: bool):
-    """Renders the sidebar controls and returns configuration options."""
+def render_sidebar():
+    """Renders non-input navigation controls."""
     with st.sidebar:
-        st.markdown("### ⚡ AI System Status")
-        
-        if is_key_configured:
-            st.success("🟢 Groq API Connected")
-        else:
-            st.warning("⚠️ Groq API Key Required")
-            st.caption("Paste your key into `.env` (`GROQ_API_KEY=gsk_...`) or `FIXED_GROQ_API_KEY` in `app.py`.")
-
+        st.markdown("### 🔒 Privacy")
+        st.caption("Your CV is analyzed with Groq using the key configured by the app owner.")
         st.markdown("---")
-        st.markdown("### ⚙️ Model & Retrieval")
-        model_choice = st.selectbox(
-            "Groq LLM Model",
-            options=["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
-            index=0,
-            help="Llama 3.3 70B delivers comprehensive recruiter evaluation; 8B offers ultra-fast response."
-        )
-        
-        top_k_chunks = st.slider(
-            "Top K Context Chunks",
-            min_value=2,
-            max_value=8,
-            value=4,
-            help="Number of most relevant resume sections retrieved from vector database."
-        )
-
-        st.markdown("---")
-        st.markdown("### 🛠️ Architecture Stack")
+        st.markdown("### 🛠️ Analysis")
         st.markdown("""
-        - **LLM Engine**: Groq LPU™ (Ultra-Fast)
-        - **Vector Embeddings**: ChromaDB Local Engine
-        - **Vector Storage**: In-Memory Ephemeral ChromaDB
+        - **Requirement matching**: Local text analysis
         - **PDF Engine**: `pdfplumber`
         """)
 
@@ -192,8 +160,6 @@ def render_sidebar(is_key_configured: bool):
             st.session_state.clear()
             st.rerun()
             
-    return model_choice, top_k_chunks
-
 def render_inputs():
     """Renders the two-column inputs and evaluation trigger button."""
     col1, col2 = st.columns([1, 1], gap="large")
@@ -223,6 +189,7 @@ def render_inputs():
         job_description = st.text_area(
             "Paste the Job Description",
             value=st.session_state.jd_text,
+            key="job_description_input",
             height=160,
             placeholder="Paste target job responsibilities, skills, and qualifications here...",
             label_visibility="collapsed"
@@ -264,7 +231,7 @@ def render_results(evaluation_text: str, retrieved_docs: list, stats: dict):
     with mcol4:
         st.markdown(f"""
         <div class="metric-box">
-            <div class="metric-value" style="font-size: 14px; padding-top: 5px;">⚡ Groq LPU</div>
+            <div class="metric-value" style="font-size: 14px; padding-top: 5px;">🔒 Local</div>
             <div class="metric-label">{stats.get('model', 'Llama-3.3')}</div>
         </div>
         """, unsafe_allow_html=True)
