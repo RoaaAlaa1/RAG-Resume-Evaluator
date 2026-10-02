@@ -78,13 +78,21 @@ pip install -r requirements.txt
 ```
 
 ### 4. Configure Groq (app owner only)
-Open the root `.env` file and replace the placeholder value:
+For local runs, open the root `.env` file and replace the placeholder value:
 
 ```env
 GROQ_API_KEY=gsk_your_actual_key_here
 ```
 
 The key is loaded server-side. Users only upload a CV and provide a job description; they never see or enter the key.
+
+For Streamlit Cloud, open your app's **Settings → Secrets** and add:
+
+```toml
+GROQ_API_KEY = "gsk_your_actual_key_here"
+```
+
+The deployed app cannot read your local `.env` because `.env` is intentionally ignored by Git.
 
 ---
 

@@ -6,6 +6,7 @@ import pdfplumber
 import streamlit as st
 from dotenv import load_dotenv
 from groq import Groq
+from streamlit.errors import StreamlitSecretNotFoundError
 
 from ui import (
     apply_custom_css,
@@ -150,10 +151,17 @@ def generate_groq_report(
 ) -> str:
     """Generate a structured recruiter report using the server-configured Groq key."""
     api_key = os.getenv("GROQ_API_KEY", "").strip().strip("\"'")
+    if not api_key:
+        try:
+            api_key = str(st.secrets.get("GROQ_API_KEY", "")).strip().strip("\"'")
+        except StreamlitSecretNotFoundError:
+            api_key = ""
+
     if not api_key or api_key.startswith("gsk_your_"):
         raise RuntimeError(
-            f"GROQ_API_KEY was not loaded from {DOTENV_PATH}. "
-            "Check that the variable name is exact and restart Streamlit."
+            "GROQ_API_KEY is not configured. For local runs, add it to the root "
+            f".env file ({DOTENV_PATH}). For Streamlit Cloud, add it under "
+            "Settings > Secrets as GROQ_API_KEY = \"your_key\"."
         )
 
     client = Groq(api_key=api_key)
