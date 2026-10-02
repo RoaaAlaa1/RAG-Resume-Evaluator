@@ -191,7 +191,7 @@ List requirements not demonstrated or only weakly supported. Do not claim a skil
 Give 3 concrete, honest suggestions, including what evidence or keywords to add.
 """
     completion = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
+        model="openai/gpt-oss-20b",
         messages=[
             {
                 "role": "system",
@@ -200,7 +200,7 @@ Give 3 concrete, honest suggestions, including what evidence or keywords to add.
             {"role": "user", "content": prompt},
         ],
         temperature=0.2,
-        max_tokens=1800,
+        max_tokens=1200,
     )
     content = completion.choices[0].message.content
     if not content:
@@ -241,7 +241,7 @@ if evaluate_btn:
                             "pages": page_count,
                             "chunks": comparison["requirements"],
                             "retrieved": len(retrieved_context),
-                            "model": "Groq / Llama 3.1 8B",
+                            "model": "Groq / GPT OSS 20B",
                         },
                     )
                 except Exception as exc:

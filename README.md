@@ -8,7 +8,7 @@ The application extracts selectable text from PDF resumes and uses Groq to produ
 
 ## 🌟 Key Features
 
-- **⚡ Groq Report Generation**: Groq's Llama 3.1 model turns extracted CV evidence into a structured recruiter report.
+- **⚡ Groq Report Generation**: Groq's `openai/gpt-oss-20b` model turns extracted CV evidence into a structured recruiter report.
 - **🎨 Polished Light-Themed UI**: Modern aesthetics built with *Plus Jakarta Sans* typography, soft gradients, clean card containers, and subtle drop shadows.
 - **🧱 Modular Architecture**: Clean separation of concerns with a dedicated UI module ([`ui.py`](ui.py)) and backend pipeline ([`app.py`](app.py)).
 - **✨ 1-Click Sample Testing**: Includes a built-in sample job description loader to test resume matching instantly.
